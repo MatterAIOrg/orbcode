@@ -21,7 +21,7 @@ claude plugin marketplace update orbcode-marketplace
 If this fails (e.g. git/SSH auth error), fall back to adding via HTTPS, then removing the old entry:
 
 ```bash
-claude plugin marketplace add https://github.com/AquaSecure/orbcode-plugin.git
+claude plugin marketplace add https://github.com/MatterAIOrg/orbcode.git
 ```
 
 If the add succeeded, remove the old marketplace entry:

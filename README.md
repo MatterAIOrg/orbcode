@@ -40,7 +40,7 @@ Before each inference call, the full request (messages, model, tools, headers) i
 From inside a Claude Code session:
 
 ```
-/plugin marketplace add AquaSecure/orbcode-plugin
+/plugin marketplace add MatterAIOrg/orbcode
 /plugin install orb@matterai-marketplace
 ```
 
