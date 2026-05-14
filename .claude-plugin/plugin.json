@@ -1,0 +1,15 @@
+{
+  "name": "orb",
+  "description": "Orb Code plugin for Claude Code to cut costs by 40%",
+  "version": "0.1.0",
+  "author": {
+    "name": "MatterAI"
+  },
+  "homepage": "https://matterai.so",
+  "mcpServers": {
+    "orb": {
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/orb-mcp.js"]
+    }
+  }
+}

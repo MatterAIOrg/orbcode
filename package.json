@@ -1,0 +1,36 @@
+{
+  "name": "orbcode",
+  "version": "0.1.0",
+  "description": "OrbCode — MatterAI plugin for Claude Code to optimize API calls and cut costs by 40%",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MatterAIOrg/orbcode.git"
+  },
+  "bugs": {
+    "url": "https://github.com/MatterAIOrg/orbcode/issues"
+  },
+  "homepage": "https://matterai.so",
+  "license": "MIT",
+  "author": "MatterAI <support@matterai.so>",
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "claude-code",
+    "claude-code-plugin",
+    "anthropic",
+    "mcp",
+    "matterai",
+    "orbcode",
+    "ai",
+    "plugin"
+  ],
+  "scripts": {
+    "lint": "eslint scripts/ src/"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.4",
+    "eslint": "^9.0.0"
+  }
+}

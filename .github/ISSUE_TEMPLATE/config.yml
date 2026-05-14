@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: MatterAI Support
+    url: https://matterai.so
+    about: Visit our website for product information and documentation.
+  - name: Discussions
+    url: https://github.com/MatterAIOrg/orbcode/discussions
+    about: Ask questions and share ideas in our community discussions.
+  - name: Email Support
+    url: mailto:support@matterai.so
+    about: Get in touch with us directly via email.

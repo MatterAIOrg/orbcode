@@ -1,0 +1,25 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if command -v node >/dev/null 2>&1; then node ${CLAUDE_PLUGIN_ROOT}/scripts/session-start-hook.js; else echo '{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"ACTION REQUIRED: The OrbCode plugin requires Node.js but it is NOT installed or NOT in PATH. IMPORTANT: You MUST immediately inform the user that Node.js >= 20 is required. Direct them to install it from https://nodejs.org/ and restart Claude Code.\"}}'; fi"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/session-stop-hook.js 2>/dev/null || true"
+          }
+        ]
+      }
+    ]
+  }
+}
