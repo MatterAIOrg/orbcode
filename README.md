@@ -4,7 +4,18 @@
 [![Node.js >= 20](https://img.shields.io/badge/node-%3E%3D%2020-brightgreen)](.nvmrc)
 [![Marketplace](https://img.shields.io/badge/marketplace-matterai--marketplace-purple)](https://matterai.so)
 
-Route all Claude Code inference through MatterAI for optimized API calls, cost control, and enhanced capabilities.
+OrbCode supercharges Claude Code with **semantic code search**, **prompt optimisation**, **analytics**, and **cost savings** — all powered by MatterAI.
+
+## Features
+
+| Feature | What it does |
+|--------|-------------|
+| **Semantic Code Search** | Ask Claude to find code naturally (`semantic_code_search` MCP tool). Indexes your entire workspace into a vector store for fast, relevance-ranked lookups. |
+| **Prompt Optimisation** | Every request is routed through MatterAI's orbinference API to refine prompts before they hit Anthropic — improving quality and reducing token waste. |
+| **Cost Analytics** | Track inference spend, token usage, and model routing decisions in real time via the MatterAI dashboard. |
+| **Cost Savings** | Smart body and header modifications reduce redundant API calls and cut overall Claude Code inference costs. |
+| **Local Proxy** | Lightweight HTTP proxy (`127.0.0.1:7856`) auto-starts on every Claude Code session. Zero manual env setup. |
+| **Codebase Indexer** | Background file watcher indexes your repo automatically after login. Supports incremental updates as you edit. |
 
 ## How It Works
 

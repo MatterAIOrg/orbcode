@@ -1,6 +1,6 @@
 {
   "name": "orb",
-  "description": "Orb Code plugin for Claude Code to cut costs by 40%",
+  "description": "Claude Code plugin for semantic code search, prompt optimisation, analytics, and cost savings",
   "version": "0.1.0",
   "author": {
     "name": "MatterAI"

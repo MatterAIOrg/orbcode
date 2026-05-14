@@ -1,7 +1,7 @@
 {
   "name": "orbcode",
   "version": "0.1.0",
-  "description": "OrbCode — MatterAI plugin for Claude Code to optimize API calls and cut costs by 40%",
+  "description": "Claude Code plugin for semantic code search, prompt optimisation, analytics, and cost savings",
   "type": "module",
   "repository": {
     "type": "git",
