@@ -425,17 +425,51 @@ function handleProxyStop() {
 
 // ── Setup ──────────────────────────────────────────────────────────────────────
 
+const ROLE_FILE = join(ORB_DIR, "role.json");
+
+function getRoleArg() {
+  const roleIdx = process.argv.indexOf("--role");
+  if (roleIdx !== -1 && process.argv[roleIdx + 1]) {
+    return process.argv[roleIdx + 1];
+  }
+  return null;
+}
+
+function readStoredRole() {
+  try {
+    const data = JSON.parse(readFileSync(ROLE_FILE, "utf-8"));
+    return data.role || "";
+  } catch {
+    return "";
+  }
+}
+
+function saveRole(role) {
+  if (!role) return;
+  try {
+    writeFileSync(ROLE_FILE, JSON.stringify({ role }, null, 2));
+  } catch (err) {
+    console.error(`  ⚠️  Could not save role: ${err.message}`);
+  }
+}
+
 async function handleSetup() {
   console.log("");
   console.log("🔧 OrbCode Setup");
   console.log("─".repeat(40));
 
-  // 1. Start proxy.
+  // 1. Persist role if provided via --role (the SKILL harness asks the user).
+  const roleArg = getRoleArg();
+  if (roleArg) {
+    saveRole(roleArg);
+  }
+
+  // 2. Start proxy.
   console.log("");
   console.log("Step 1: Starting proxy...");
   await handleProxyStart();
 
-  // 2. Authenticate (or skip if already logged in). handleLogin() also
+  // 3. Authenticate (or skip if already logged in). handleLogin() also
   //    starts the indexer after saving the token, so we don't repeat that
   //    step on the fresh-auth path.
   let authed = false;
@@ -463,12 +497,12 @@ async function handleSetup() {
     }
   }
 
-  // 3. Persist ANTHROPIC_BASE_URL into ~/.claude/settings.json so Claude Code
-  //    routes inference through the proxy on its next launch. The plugin's
-  //    own settings.json env block isn't reliably applied to the main
-  //    process, so we write it at the user level instead.
+  // 4. Persist ANTHROPIC_BASE_URL and API_TIMEOUT_MS into ~/.claude/settings.json
+  //    so Claude Code routes inference through the proxy on its next launch.
+  //    The plugin's own settings.json env block isn't reliably applied to the
+  //    main process, so we write it at the user level instead.
   console.log("");
-  console.log("Step 3: Configuring ANTHROPIC_BASE_URL...");
+  console.log("Step 3: Configuring Claude Code settings...");
   const proxyInfo = getProxyInfo();
   const proxyPort = proxyInfo?.port || DEFAULT_PROXY_PORT;
   const envResult = ensureUserBaseUrlConfig(proxyPort);
@@ -480,6 +514,15 @@ async function handleSetup() {
   } else if (envResult && envResult.error) {
     console.log(`  ❌ Could not update ${USER_SETTINGS_FILE}: ${envResult.error}`);
     console.log(`     Manually add { "env": { "ANTHROPIC_BASE_URL": "${baseUrl}" } }`);
+  }
+
+  const timeoutResult = ensureUserTimeoutConfig();
+  if (timeoutResult === "updated") {
+    console.log(`  ✅ Wrote API_TIMEOUT_MS=300000 (5 min) to ${USER_SETTINGS_FILE}`);
+  } else if (timeoutResult === "already_set") {
+    console.log(`  ✅ API_TIMEOUT_MS already configured`);
+  } else if (timeoutResult && timeoutResult.error) {
+    console.log(`  ❌ Could not update API_TIMEOUT_MS: ${timeoutResult.error}`);
   }
 
   console.log("");
@@ -786,6 +829,38 @@ function ensureUserBaseUrlConfig(port) {
   const nextSettings = {
     ...settings,
     env: { ...existingEnv, ANTHROPIC_BASE_URL: baseUrl },
+  };
+
+  try {
+    mkdirSync(dirname(USER_SETTINGS_FILE), { recursive: true });
+    writeFileSync(
+      USER_SETTINGS_FILE,
+      JSON.stringify(nextSettings, null, 2) + "\n",
+    );
+    return "updated";
+  } catch (err) {
+    return { error: err.message };
+  }
+}
+
+/**
+ * Ensure ~/.claude/settings.json has env.API_TIMEOUT_MS set to 5 minutes
+ * (300000 ms). Returns "already_set" | "updated" | { error: string }.
+ */
+function ensureUserTimeoutConfig() {
+  const TIMEOUT_MS = 300000;
+  const settings = readUserSettings();
+
+  const existingEnv =
+    settings.env && typeof settings.env === "object" ? settings.env : {};
+
+  if (existingEnv.API_TIMEOUT_MS === TIMEOUT_MS || existingEnv.API_TIMEOUT_MS === String(TIMEOUT_MS)) {
+    return "already_set";
+  }
+
+  const nextSettings = {
+    ...settings,
+    env: { ...existingEnv, API_TIMEOUT_MS: TIMEOUT_MS },
   };
 
   try {

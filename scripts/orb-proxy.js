@@ -23,9 +23,17 @@ import {
   mkdirSync,
   unlinkSync,
 } from "node:fs";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import { homedir } from "node:os";
 import { execSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import {
+  collectEnvironmentDetails,
+  formatEnvironmentDetails,
+} from "./orb-env.js";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -61,6 +69,16 @@ function getAuthToken() {
   }
 }
 
+function getUserRole() {
+  try {
+    const roleFile = join(ORB_DIR, "role.json");
+    const data = JSON.parse(readFileSync(roleFile, "utf-8"));
+    return data.role || "";
+  } catch {
+    return "";
+  }
+}
+
 function collectBody(stream) {
   return new Promise((resolve, reject) => {
     const chunks = [];
@@ -76,7 +94,8 @@ function makeRequest(url, options, body) {
     const transport = parsed.protocol === "http:" ? http : https;
     const req = transport.request(parsed, options, (res) => resolve(res));
     req.on("error", reject);
-    req.setTimeout(30000, () => req.destroy(new Error("Request timed out")));
+    // 10 minutes timeout to allow extended thinking and long inferences
+    req.setTimeout(600000, () => req.destroy(new Error("Request timed out")));
     if (body) req.write(body);
     req.end();
   });
@@ -107,6 +126,60 @@ function getWorkspaceInfo() {
 
   _workspaceCache = { dir, repo, branch };
   return _workspaceCache;
+}
+
+// Per-process tracking of sessions that have already received their workspace
+// `<environment_details>` snapshot. The proxy attaches the full snapshot on
+// every request (the backend dedupes), but we also keep this so we can include
+// a `firstRequest` flag — a hint the backend can use for cheap fast-path skips
+// without consulting its own session store.
+const _sessionsSeen = new Set();
+
+function getClaudeSessionId(headers) {
+  // Claude Code sends one of several aliases depending on version. Mirror the
+  // backend's lookup order so the "first request per session" signal we send
+  // lines up with the backend's session dedupe map.
+  const candidates = [
+    "x-claude-code-session-id",
+    "x-claude-session-id",
+    "x-claude-code-ide-session-id",
+    "x-orb-session-id",
+    "x-session-id",
+    "anthropic-session-id",
+  ];
+  for (const name of candidates) {
+    const v = headers?.[name] || headers?.[name.toLowerCase()];
+    if (v) return Array.isArray(v) ? v[0] : String(v);
+  }
+  return "";
+}
+
+function buildEnvironmentDetailsPayload(headers) {
+  let details;
+  try {
+    details = collectEnvironmentDetails();
+  } catch (err) {
+    log(`  ⚠ Failed to collect environment details: ${err.message}`);
+    return null;
+  }
+
+  const sessionId = getClaudeSessionId(headers);
+  const firstRequest = sessionId ? !_sessionsSeen.has(sessionId) : true;
+  if (sessionId) _sessionsSeen.add(sessionId);
+
+  let rendered = "";
+  try {
+    rendered = formatEnvironmentDetails(details);
+  } catch (err) {
+    log(`  ⚠ Failed to format environment details: ${err.message}`);
+  }
+
+  return {
+    sessionId,
+    firstRequest,
+    details,
+    rendered,
+  };
 }
 
 // Only inference calls (POST /v1/messages...) should be routed through
@@ -168,16 +241,33 @@ async function handleRequest(req, res) {
         parsedBody = bodyStr; // Forward raw if not JSON
       }
 
+      // Always attach the workspace environment snapshot. The backend dedupes
+      // per-session, but the plugin's `firstRequest` flag lets it skip the
+      // session-store lookup on subsequent turns in the same session.
+      const envPayload = buildEnvironmentDetailsPayload(req.headers);
+
       const orbPayload = JSON.stringify({
         path: req.url,
         method: req.method,
         body: parsedBody,
         headers: req.headers,
+        environmentDetails: envPayload
+          ? {
+              sessionId: envPayload.sessionId,
+              firstRequest: envPayload.firstRequest,
+              details: envPayload.details,
+              rendered: envPayload.rendered,
+            }
+          : null,
       });
 
       const orbUrl = `${MATTERAI_HOST}${MATTERAI_PATH}`;
 
-      log(`  → MatterAI ${orbUrl} (${Buffer.byteLength(orbPayload)} bytes)`);
+      log(
+        `  → MatterAI ${orbUrl} (${Buffer.byteLength(orbPayload)} bytes, env=${
+          envPayload ? (envPayload.firstRequest ? "first" : "cached") : "none"
+        })`,
+      );
 
       const workspace = getWorkspaceInfo();
 
@@ -194,6 +284,11 @@ async function handleRequest(req, res) {
             "x-workspace": workspace.dir,
             "x-git-repo": workspace.repo,
             "x-git-branch": workspace.branch,
+            "x-orb-session-id": envPayload?.sessionId || "",
+            "x-orb-env-first-request": envPayload
+              ? String(envPayload.firstRequest)
+              : "false",
+            "x-orb-role": getUserRole(),
           },
         },
         orbPayload,
@@ -282,8 +377,15 @@ async function handleRequest(req, res) {
       method: req.method,
       headers: anthropicHeaders,
     });
+    // 10 minutes timeout to allow extended thinking and long inferences
+    anthropicReq.setTimeout(600000, () => {
+      anthropicReq.destroy(new Error("Anthropic request timed out"));
+    });
+
+    let responseStarted = false;
 
     anthropicReq.on("response", (anthropicRes) => {
+      responseStarted = true;
       log(
         `  ← Anthropic ${anthropicRes.statusCode} (${anthropicRes.headers["content-type"] || "unknown"})`,
       );
@@ -339,16 +441,22 @@ async function handleRequest(req, res) {
 
     anthropicReq.on("error", (err) => {
       log(`  ✗ Anthropic request error: ${err.message}`);
-      res.writeHead(502, { "Content-Type": "application/json" });
-      res.end(
-        JSON.stringify({
-          type: "error",
-          error: {
-            type: "api_error",
-            message: `OrbCode: Failed to reach Anthropic API: ${err.message}`,
-          },
-        }),
-      );
+      // Only write error response if we haven't already sent headers
+      if (!responseStarted && !res.headersSent) {
+        res.writeHead(502, { "Content-Type": "application/json" });
+        res.end(
+          JSON.stringify({
+            type: "error",
+            error: {
+              type: "api_error",
+              message: `OrbCode: Failed to reach Anthropic API: ${err.message}`,
+            },
+          }),
+        );
+      } else if (!res.writableEnded) {
+        // If response already started, just close the stream
+        res.end();
+      }
     });
 
     if (modifiedBody && req.method !== "HEAD" && req.method !== "GET") {
@@ -357,16 +465,23 @@ async function handleRequest(req, res) {
     anthropicReq.end();
   } catch (err) {
     log(`  ✗ Proxy error: ${err.message}`);
-    res.writeHead(500, { "Content-Type": "application/json" });
-    res.end(
-      JSON.stringify({
-        type: "error",
-        error: {
-          type: "api_error",
-          message: `OrbCode: Proxy error — ${err.message}`,
-        },
-      }),
-    );
+    // Only write an error response if we haven't already started streaming.
+    // After headers are sent (e.g. mid-stream from Anthropic), writeHead
+    // would throw ERR_HTTP_HEADERS_SENT and crash the proxy.
+    if (!res.headersSent) {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(
+        JSON.stringify({
+          type: "error",
+          error: {
+            type: "api_error",
+            message: `OrbCode: Proxy error — ${err.message}`,
+          },
+        }),
+      );
+    } else if (!res.writableEnded) {
+      res.end();
+    }
   }
 }
 
@@ -394,12 +509,21 @@ const port = parseInt(process.argv[2]) || DEFAULT_PORT;
 
 mkdirSync(ORB_DIR, { recursive: true });
 
-const server = http.createServer((req, res) => {
-  // Health check endpoint
-  if (handleHealth(req, res)) return;
-  // All other requests are proxied
-  handleRequest(req, res);
-});
+const server = http.createServer(
+  {
+    // Allow up to 10 minutes for the full request/response cycle.
+    // The default requestTimeout (5 min on Node 19+) is too tight
+    // for long inference + extended thinking through the proxy chain.
+    requestTimeout: 600000,
+    headersTimeout: 60000,
+  },
+  (req, res) => {
+    // Health check endpoint
+    if (handleHealth(req, res)) return;
+    // All other requests are proxied
+    handleRequest(req, res);
+  },
+);
 
 server.listen(port, "127.0.0.1", () => {
   log(
@@ -444,6 +568,18 @@ server.on("error", (err) => {
   process.exit(1);
 });
 
+// Handle malformed/early-closed client requests without crashing.
+// Without this, a client TCP reset during handshake can emit a 'clientError'
+// event that, if unhandled, takes the process down.
+server.on("clientError", (err, socket) => {
+  log(`Client error: ${err.message} (code=${err.code || "none"})`);
+  if (socket.writable) {
+    socket.end("HTTP/1.1 400 Bad Request\r\n\r\n");
+  } else {
+    socket.destroy();
+  }
+});
+
 // ── Graceful Shutdown ──────────────────────────────────────────────────────────
 
 function shutdown(signal) {
@@ -464,4 +600,14 @@ process.on("SIGINT", () => shutdown("SIGINT"));
 // Prevent unhandled rejections from crashing the proxy
 process.on("unhandledRejection", (err) => {
   log(`Unhandled rejection: ${err?.message || err}`);
+});
+
+// Last-resort safety net: keep the proxy alive across any synchronous throw
+// that escapes a callback (e.g. ERR_HTTP_HEADERS_SENT inside a response
+// 'error' handler). Without this, a single stray exception during a long
+// Claude Code session would kill the proxy and force the SessionStart hook
+// to respawn it — which is exactly the mid-session interruption we're trying
+// to eliminate. We log the error and keep serving.
+process.on("uncaughtException", (err) => {
+  log(`Uncaught exception (proxy kept alive): ${err?.stack || err?.message || err}`);
 });
